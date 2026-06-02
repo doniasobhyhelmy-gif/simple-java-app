@@ -1,37 +1,53 @@
-pipeline{
-    agent{
-        label 'aws-agent'
+pipeline {
+    agent { label 'redhat' } 
+    
+    environment {
+        DOCKERHUB_CREDENTIALS = credentials('dockerhub-creds')
+        DOCKER_USER = "doniasobhy" 
+        IMAGE_NAME = "${DOCKER_USER}/simple-java-app"
+        IMAGE_TAG = "${BUILD_NUMBER}"
     }
-    stages{
-        stage('build'){
-            steps{
-                script{
-                    sh 'docker build -t java-app .'
-                }
+
+    stages {
+        stage('Build App') {
+            steps {
+                sh 'mvn clean package -DskipTests'
             }
         }
 
-        stage('push'){
-            steps{
-                script{
-                    withCredentials([usernamePassword(credentialsId: 'docker-hub', passwordVariable: 'Password', usernameVariable: 'Username')]) {
-                    sh 'docker login --username $Username --password $Password'
-                    sh 'docker tag java-app $Username/java-app'
-                    sh 'docker push $Username/java-app'
-                    }
-                }
+        stage('Test App') {
+            steps {
+                sh 'mvn test'
             }
         }
 
-        stage('deploy'){
-            steps{
-                script{
-                    withAWS(credentials: 'aws-cli', region: 'us-east-2') {
-                    sh 'aws eks update-kubeconfig --region us-east-2 --name eks'
-                    sh 'kubectl apply -f ./k8s/deployment.yaml'
-                    }
-                }
+        stage('Build Image') {
+            steps {
+                sh 'docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .'
+                sh 'docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${IMAGE_NAME}:latest'
             }
+        }
+
+        stage('Push DockerHub') {
+            steps {
+                sh 'echo $DOCKERHUB_CREDENTIALS_PSW | docker login -u $DOCKERHUB_CREDENTIALS_USR --password-stdin'
+                sh 'docker push ${IMAGE_NAME}:${IMAGE_TAG}'
+                sh 'docker push ${IMAGE_NAME}:latest'
+            }
+        }
+        
+        stage('Deploy') {
+            steps {
+                sh 'docker stop java-app || true'
+                sh 'docker rm java-app || true'
+                sh 'docker run -d --name java-app -p 8081:8080 ${IMAGE_NAME}:latest'
+            }
+        }
+    }
+    
+    post {
+        always {
+            sh 'docker logout'
         }
     }
 }
